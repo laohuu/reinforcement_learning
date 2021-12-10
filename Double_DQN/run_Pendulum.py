@@ -22,7 +22,7 @@ RL = Double_DQN(ACTION_SPACE, env.observation_space.shape[0],
                 )
 
 total_steps = 0
-# for i in range(500):
+
 observation = env.reset()
 while True:
     env.render()

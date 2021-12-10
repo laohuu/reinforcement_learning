@@ -18,7 +18,6 @@ class DQNNet(nn.Module):
         return self.out_layer(x)
 
 
-# Deep Q Network off-policy
 class Double_DQN:
     def __init__(
             self,

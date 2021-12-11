@@ -9,7 +9,8 @@ torch.manual_seed(1)
 class DQNDuelingNet(nn.Module):
     def __init__(self, n_actions, n_features):
         super(DQNDuelingNet, self).__init__()
-        self.feature_layer = nn.Linear(n_features, 10)
+        self.feature_layer = nn.Sequential(nn.Linear(n_features, 10),
+                                           nn.ReLU())
         self.value_layer = nn.Linear(10, 1)
         self.advantage_layer = nn.Linear(10, n_actions)
 

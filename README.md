@@ -1,9 +1,14 @@
-# RL_ALgorithm
-自学用
+# 强化学习Pytorch
+经典强化学习算法的 Pytorch 实现
 
- 莫烦强化学习的pytorch实现
+## 环境依赖
 
-参考：
+1. PyTorch
+2. OpenAI GYM
 
-https://github.com/MorvanZhou/Reinforcement-learning-with-tensorflow
-https://github.com/zrr1999/Reinforcement-learning-with-PyTorch
+## 算法实现
+
+
+
+## 参考链接
+1. https://github.com/seungeunrho/minimalRL

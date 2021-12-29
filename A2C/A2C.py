@@ -4,129 +4,190 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
+import torch.multiprocessing as mp
+import numpy as np
 
 # Hyperparameters
-gamma = 0.0002
+n_train_processes = 3
 learning_rate = 0.0002
-MAX_EPISODE = 3000
-RENDER = True
-
-env = gym.make('CartPole-v1')
-env = env.unwrapped
-env.seed(1)
-torch.manual_seed(1)
-
-print("env.action_space :", env.action_space)
-print("env.observation_space :", env.observation_space)
-# print("env.action_space.high :", env.action_space.high)
-# print("env.action_space.low :", env.action_space.low)
-
-n_features = env.observation_space.shape[0]
-n_actions = env.action_space.n
+update_interval = 5
+gamma = 0.98
+max_train_steps = 60000
+PRINT_INTERVAL = update_interval * 100
 
 
-class Actor(nn.Module):
+class ActorCritic(nn.Module):
     def __init__(self):
-        super(Actor, self).__init__()
-        self.cost_his = []
-        self.episode = []
+        super(ActorCritic, self).__init__()
+        self.fc1 = nn.Linear(4, 256)
+        self.fc_pi = nn.Linear(256, 2)
+        self.fc_v = nn.Linear(256, 1)
 
-        hidden_units = 256
-        self.fc_layer = nn.Sequential(nn.Linear(n_features, hidden_units),
-                                      nn.ReLU(),
-                                      nn.Linear(hidden_units, n_actions),
-                                      nn.Softmax(dim=-1))
+    def pi(self, x, softmax_dim=1):
+        x = F.relu(self.fc1(x))
+        x = self.fc_pi(x)
+        prob = F.softmax(x, dim=softmax_dim)
+        return prob
 
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
-
-    def forward(self, x):
-        x = self.fc_layer(x)
-        return x
-
-    def put_data(self, item):
-        self.episode.append(item)
-
-    def train_net(self):
-        reward = 0
-        self.optimizer.zero_grad()
-        for r, prob in self.episode[::-1]:
-            reward = r + gamma * reward
-            loss = -torch.log(prob) * reward
-            loss.backward()
-
-        self.optimizer.step()
-
-        self.episode = []
-
-    def choose_action(self, observation):
-        prob_weights = self.forward(torch.from_numpy(observation))
-        m = Categorical(prob_weights)
-        action_idx = m.sample()
-        return action_idx, prob_weights
+    def v(self, x):
+        x = F.relu(self.fc1(x))
+        v = self.fc_v(x)
+        return v
 
 
-class Critic(nn.Module):
-    def __init__(self):
-        super(Critic, self).__init__()
-        self.episode = []
+def worker(worker_id, master_end, worker_end):
+    master_end.close()  # Forbid worker to use the master end for messaging
+    env = gym.make('CartPole-v1')
+    env.seed(worker_id)
 
-        hidden_units = 256
-        self.fc_layer = nn.Sequential(nn.Linear(n_features, hidden_units),
-                                      nn.ReLU(),
-                                      nn.Linear(hidden_units, 1))
-        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
-
-    def forward(self, x):
-        x = self.fc_layer(x)
-        return x
-
-    def put_data(self, item):
-        self.episode.append(item)
-
-    def train_net(self):
-        reward = 0
-        self.optimizer.zero_grad()
-        for r, prob in self.episode[::-1]:
-            reward = r + gamma * reward
-            loss = -torch.log(prob) * reward
-            loss.backward()
-
-        self.optimizer.step()
-
-        self.episode = []
-
-    def choose_action(self, observation):
-        prob_weights = self.forward(torch.from_numpy(observation))
-        m = Categorical(prob_weights)
-        action_idx = m.sample()
-        return action_idx, prob_weights
+    while True:
+        cmd, data = worker_end.recv()
+        if cmd == 'step':
+            ob, reward, done, info = env.step(data)
+            if done:
+                ob = env.reset()
+            worker_end.send((ob, reward, done, info))
+        elif cmd == 'reset':
+            ob = env.reset()
+            worker_end.send(ob)
+        elif cmd == 'reset_task':
+            ob = env.reset_task()
+            worker_end.send(ob)
+        elif cmd == 'close':
+            worker_end.close()
+            break
+        elif cmd == 'get_spaces':
+            worker_end.send((env.observation_space, env.action_space))
+        else:
+            raise NotImplementedError
 
 
-def main():
-    policy = Policy()
+class ParallelEnv:
+    def __init__(self, n_train_processes):
+        self.nenvs = n_train_processes
+        self.waiting = False
+        self.closed = False
+        self.workers = list()
+
+        master_ends, worker_ends = zip(*[mp.Pipe() for _ in range(self.nenvs)])
+        self.master_ends, self.worker_ends = master_ends, worker_ends
+
+        for worker_id, (master_end, worker_end) in enumerate(zip(master_ends, worker_ends)):
+            p = mp.Process(target=worker,
+                           args=(worker_id, master_end, worker_end))
+            p.daemon = True
+            p.start()
+            self.workers.append(p)
+
+        # Forbid master to use the worker end for messaging
+        for worker_end in worker_ends:
+            worker_end.close()
+
+    def step_async(self, actions):
+        for master_end, action in zip(self.master_ends, actions):
+            master_end.send(('step', action))
+        self.waiting = True
+
+    def step_wait(self):
+        results = [master_end.recv() for master_end in self.master_ends]
+        self.waiting = False
+        obs, rews, dones, infos = zip(*results)
+        return np.stack(obs), np.stack(rews), np.stack(dones), infos
+
+    def reset(self):
+        for master_end in self.master_ends:
+            master_end.send(('reset', None))
+        return np.stack([master_end.recv() for master_end in self.master_ends])
+
+    def step(self, actions):
+        self.step_async(actions)
+        return self.step_wait()
+
+    def close(self):  # For clean up resources
+        if self.closed:
+            return
+        if self.waiting:
+            [master_end.recv() for master_end in self.master_ends]
+        for master_end in self.master_ends:
+            master_end.send(('close', None))
+        for worker in self.workers:
+            worker.join()
+            self.closed = True
+
+
+def test(step_idx, model):
+    env = gym.make('CartPole-v1')
     score = 0.0
-    print_interval = 20
+    done = False
+    num_test = 10
 
-    for n_epi in range(10000):
+    for _ in range(num_test):
         s = env.reset()
-        done = False
-
-        while not done:  # CartPole-v1 forced to terminates at 500 step.
-            if RENDER:
-                env.render()
-            action, prob_weights = policy.choose_action(s)
-            s_, r, done, info = env.step(action.item())
-            policy.put_data((r, prob_weights[action]))
-            s = s_
+        while not done:
+            prob = model.pi(torch.from_numpy(s).float(), softmax_dim=0)
+            a = Categorical(prob).sample().numpy()
+            s_prime, r, done, info = env.step(a)
+            s = s_prime
             score += r
+        done = False
+    print(f"Step # :{step_idx}, avg score : {score / num_test:.1f}")
 
-        policy.train_net()
-
-        if n_epi % print_interval == 0 and n_epi != 0:
-            print("# of episode :{}, avg score : {}".format(n_epi, score / print_interval))
-            score = 0.0
     env.close()
 
 
+def compute_target(v_final, r_lst, mask_lst):
+    G = v_final.reshape(-1)
+    td_target = list()
+
+    for r, mask in zip(r_lst[::-1], mask_lst[::-1]):
+        G = r + gamma * G * mask
+        td_target.append(G)
+
+    return torch.tensor(td_target[::-1]).float()
+
+
 if __name__ == '__main__':
-    main()
+    envs = ParallelEnv(n_train_processes)
+
+    model = ActorCritic()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    step_idx = 0
+    s = envs.reset()
+    while step_idx < max_train_steps:
+        s_lst, a_lst, r_lst, mask_lst = list(), list(), list(), list()
+        for _ in range(update_interval):
+            prob = model.pi(torch.from_numpy(s).float())
+            a = Categorical(prob).sample().numpy()
+            s_prime, r, done, info = envs.step(a)
+
+            s_lst.append(s)
+            a_lst.append(a)
+            r_lst.append(r / 100.0)
+            mask_lst.append(1 - done)
+
+            s = s_prime
+            step_idx += 1
+
+        s_final = torch.from_numpy(s_prime).float()
+        v_final = model.v(s_final).detach().clone().numpy()
+        td_target = compute_target(v_final, r_lst, mask_lst)
+
+        td_target_vec = td_target.reshape(-1)
+        s_vec = torch.tensor(s_lst).float().reshape(-1, 4)  # 4 == Dimension of state
+        a_vec = torch.tensor(a_lst).reshape(-1).unsqueeze(1)
+        advantage = td_target_vec - model.v(s_vec).reshape(-1)
+
+        pi = model.pi(s_vec, softmax_dim=1)
+        pi_a = pi.gather(1, a_vec).reshape(-1)
+        loss = -(torch.log(pi_a) * advantage.detach()).mean() + \
+               F.smooth_l1_loss(model.v(s_vec).reshape(-1), td_target_vec)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if step_idx % PRINT_INTERVAL == 0:
+            test(step_idx, model)
+
+    envs.close()

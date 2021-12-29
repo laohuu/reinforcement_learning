@@ -5,9 +5,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
 
+# Hyperparameters
 gamma = 0.0002
 learning_rate = 0.98
-MAX_EPISODE = 3000
+MAX_EPISODE = 10000
 RENDER = True
 
 env = gym.make('CartPole-v1')
@@ -67,7 +68,7 @@ def main():
     score = 0.0
     print_interval = 20
 
-    for n_epi in range(10000):
+    for n_epi in range(MAX_EPISODE):
         s = env.reset()
         done = False
 

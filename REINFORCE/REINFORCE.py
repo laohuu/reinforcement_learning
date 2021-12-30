@@ -18,8 +18,6 @@ torch.manual_seed(1)
 
 print("env.action_space :", env.action_space)
 print("env.observation_space :", env.observation_space)
-# print("env.action_space.high :", env.action_space.high)
-# print("env.action_space.low :", env.action_space.low)
 
 n_features = env.observation_space.shape[0]
 n_actions = env.action_space.n

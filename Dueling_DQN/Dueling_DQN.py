@@ -1,121 +1,160 @@
-import numpy as np
-import torch
-from torch import nn
+import gym
+import collections
+import random
 
-np.random.seed(1)
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+
+# Hyperparameters
+learning_rate = 0.0005
+gamma = 0.98
+buffer_limit = 50000
+batch_size = 32
+MAX_EPISODE = 10000
+RENDER = True
+
+env = gym.make('CartPole-v1')
+env = env.unwrapped
+env.seed(1)
 torch.manual_seed(1)
+
+print("env.action_space :", env.action_space)
+print("env.observation_space :", env.observation_space)
+
+n_features = env.observation_space.shape[0]
+n_actions = env.action_space.n
+
+
+class ReplayBuffer():
+    def __init__(self):
+        self.buffer = collections.deque(maxlen=buffer_limit)
+
+    def put(self, transition):
+        self.buffer.append(transition)
+
+    def sample(self, n):
+        mini_batch = random.sample(self.buffer, n)
+        s_lst, a_lst, r_lst, s_next_lst, done_mask_lst = [], [], [], [], []
+
+        for transition in mini_batch:
+            s, a, r, s_, done_mask = transition
+            s_lst.append(s)
+            a_lst.append([a])
+            r_lst.append([r])
+            s_next_lst.append(s_)
+            done_mask_lst.append([done_mask])
+
+        return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
+               torch.tensor(r_lst), torch.tensor(s_next_lst, dtype=torch.float), \
+               torch.tensor(done_mask_lst)
+
+    def size(self):
+        return len(self.buffer)
+
+
+class QNetwork(nn.Module):
+    def __init__(self):
+        super(QNetwork, self).__init__()
+        hidden_dims = 128
+        self.out_layer = torch.nn.Sequential(nn.Linear(n_features, hidden_dims),
+                                             nn.ReLU(),
+                                             nn.Linear(hidden_dims, n_actions))
+
+    def forward(self, x):
+        return self.out_layer(x)
 
 
 class DQNDuelingNet(nn.Module):
-    def __init__(self, n_actions, n_features):
+    def __init__(self):
         super(DQNDuelingNet, self).__init__()
-        self.feature_layer = nn.Sequential(nn.Linear(n_features, 10),
+        hidden_dims = 128
+        self.feature_layer = nn.Sequential(nn.Linear(n_features, hidden_dims),
                                            nn.ReLU())
-        self.value_layer = nn.Linear(10, 1)
-        self.advantage_layer = nn.Linear(10, n_actions)
+        self.value_layer = nn.Linear(hidden_dims, 1)
+        self.advantage_layer = nn.Linear(hidden_dims, n_actions)
 
     def forward(self, x):
         feature = self.feature_layer(x)
         value = self.value_layer(feature)
         advantage = self.advantage_layer(feature)
-        return value + (advantage - torch.mean(input=advantage, dim=-1, keepdim=True))
+
+        avg_advantage = torch.mean(input=advantage, dim=-1, keepdim=True)
+        q_values = value + (advantage - avg_advantage)
+        return q_values
 
 
+# Epsilon_Greedy_Exploration
+# MAX_Greedy_Update
 class Dueling_DQN:
-    def __init__(
-            self,
-            n_actions,
-            n_features,
-            learning_rate=0.01,
-            reward_decay=0.9,
-            e_greedy=0.9,
-            replace_target_iter=300,
-            memory_size=500,
-            batch_size=32,
-            e_greedy_increment=None,
-    ):
-        self.memory_counter = 0
-        self.n_actions = n_actions
-        self.n_features = n_features
-        self.lr = learning_rate
-        self.gamma = reward_decay
-        self.epsilon_max = e_greedy
-        self.replace_target_iter = replace_target_iter
-        self.memory_size = memory_size
-        self.batch_size = batch_size
-        self.epsilon_increment = e_greedy_increment
-        self.epsilon = 0 if e_greedy_increment is not None else self.epsilon_max
-        # total learning step
-        self.learn_step_counter = 0
-        # initialize zero memory [s, a, r, s_]
-        self.memory = np.zeros((self.memory_size, n_features * 2 + 2))
-
-        # consist of [target_net, evaluate_net]
-        self._build_net()
-        self.optimizer = torch.optim.Adam(self.evaluate_net.parameters(),
-                                          learning_rate)
-        self.cost_his = []
-
-    def _build_net(self):
-        self.evaluate_net = DQNDuelingNet(self.n_actions, self.n_features)
-        self.target_net = type(self.evaluate_net)(self.n_actions, self.n_features)
+    def __init__(self):
+        # [target_net, evaluate_net]
+        self.evaluate_net = DQNDuelingNet()
+        self.target_net = type(self.evaluate_net)()
         self.target_net.load_state_dict(self.evaluate_net.state_dict())  # copy weights and stuff
 
-    def store_transition(self, s, a, r, s_):
-        transition = np.hstack((s, [a, r], s_))
+        self.optimizer = torch.optim.Adam(self.evaluate_net.parameters(),
+                                          learning_rate)
+        self.memory = ReplayBuffer()
 
-        # replace the old memory with new memory
-        index = self.memory_counter % self.memory_size
-        self.memory[index, :] = transition
+    def train(self):
+        for i in range(10):
+            s, a, r, s_, done_mask = self.memory.sample(batch_size)
 
-        self.memory_counter += 1
+            q_out = self.evaluate_net(s)
+            q_a = q_out.gather(1, a)
+            max_q_prime = torch.max(self.target_net(s_), dim=1, keepdim=True).values
+            target = r + gamma * max_q_prime * done_mask
+            loss = F.smooth_l1_loss(q_a, target)
 
-    def choose_action(self, observation):
-        state = torch.Tensor(observation[np.newaxis, :])
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
-        if np.random.uniform() < self.epsilon:
-            actions_value = self.evaluate_net(state)
-            action = actions_value.argmax(axis=1).numpy()[0]
+    def sample_action(self, obs, epsilon):
+        coin = random.random()
+        if coin < epsilon:
+            return random.randint(0, 1)
         else:
-            action = np.random.randint(0, self.n_actions)
-        return action
+            out = self.evaluate_net(obs)
+            return out.argmax().item()
 
-    def learn(self):
-        # check to replace target parameters
-        if self.learn_step_counter % self.replace_target_iter == 0:
-            self.target_net.load_state_dict(self.evaluate_net.state_dict())  # copy weights and stuff
 
-        # sample batch memory from all memory
-        indices = np.random.choice(self.memory_size, size=self.batch_size)
-        batch_memory = self.memory[indices, :]
+def main():
+    trainer = Dueling_DQN()
 
-        s = torch.Tensor(batch_memory[:, :self.n_features])
-        u = torch.LongTensor(batch_memory[:, self.n_features, np.newaxis])
-        r = torch.Tensor(batch_memory[:, self.n_features + 1, np.newaxis])
-        s_ = torch.Tensor(batch_memory[:, -self.n_features:])
+    print_interval = 20
+    score = 0.0
 
-        q_eval = self.evaluate_net(s).gather(1, u)
+    for n_epi in range(MAX_EPISODE):
+        epsilon = max(0.01, 0.08 - 0.01 * (n_epi / 200))  # Linear annealing from 8% to 1%
+        s = env.reset()
+        done = False
 
-        # 重点部分
-        q_target_next = self.target_net(s_).detach()
-        q_eval_next = self.evaluate_net(s_).detach()
-        q_next = q_target_next.gather(1, q_eval_next.argmax(axis=1).reshape(-1, 1))
-        delta = r + self.gamma * q_next - q_eval
+        while not done:
+            if RENDER:
+                env.render()
+            a = trainer.sample_action(torch.from_numpy(s).float(), epsilon)
+            s_, r, done, info = env.step(a)
+            done_mask = 0.0 if done else 1.0
+            trainer.memory.put((s, a, r / 100.0, s_, done_mask))
+            s = s_
 
-        self.optimizer.zero_grad()
-        loss = torch.mean(delta ** 2)
-        # train eval network
-        loss.backward()
-        self.optimizer.step()
-        self.cost_his.append(loss.data.numpy())
+            score += r
+            if done:
+                break
 
-        # increasing epsilon
-        self.epsilon = self.epsilon + self.epsilon_increment if self.epsilon < self.epsilon_max else self.epsilon_max
-        self.learn_step_counter += 1
+        if trainer.memory.size() > 2000:
+            trainer.train()
 
-    def plot_cost(self):
-        import matplotlib.pyplot as plt
-        plt.plot(np.arange(len(self.cost_his)), self.cost_his)
-        plt.ylabel('Cost')
-        plt.xlabel('training steps')
-        plt.show()
+        if n_epi % print_interval == 0 and n_epi != 0:
+            trainer.target_net.load_state_dict(trainer.evaluate_net.state_dict())
+            print("n_episode :{}, score : {:.1f}, n_buffer : {}, eps : {:.1f}%".format(
+                n_epi, score / print_interval, trainer.memory.size(), epsilon * 100))
+            score = 0.0
+    env.close()
+
+
+if __name__ == '__main__':
+    main()

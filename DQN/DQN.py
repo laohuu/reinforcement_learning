@@ -104,7 +104,6 @@ class DeepQNetwork:
 
 
 def main():
-    env = gym.make('CartPole-v1')
     trainer = DeepQNetwork()
 
     print_interval = 20

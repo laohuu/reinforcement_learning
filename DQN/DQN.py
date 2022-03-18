@@ -2,6 +2,7 @@ import gym
 import collections
 import random
 
+import numpy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,12 +30,12 @@ n_actions = env.action_space.n
 
 class ReplayBuffer():
     def __init__(self):
-        self.buffer = collections.deque(maxlen=buffer_limit)
+        self.buffer = collections.deque(maxlen=buffer_limit)  # 初始化buffer容量
 
     def put(self, transition):
-        self.buffer.append(transition)
+        self.buffer.append(transition)  # 存入一个transition
 
-    def sample(self, n):
+    def sample(self, n):  # 取样
         mini_batch = random.sample(self.buffer, n)
         s_lst, a_lst, r_lst, s_next_lst, done_mask_lst = [], [], [], [], []
 
@@ -46,9 +47,9 @@ class ReplayBuffer():
             s_next_lst.append(s_)
             done_mask_lst.append([done_mask])
 
-        return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
-               torch.tensor(r_lst), torch.tensor(s_next_lst, dtype=torch.float), \
-               torch.tensor(done_mask_lst)
+        return torch.tensor(numpy.array(s_lst), dtype=torch.float), torch.tensor(numpy.array(a_lst)), \
+               torch.tensor(numpy.array(r_lst)), torch.tensor(numpy.array(s_next_lst), dtype=torch.float), \
+               torch.tensor(numpy.array(done_mask_lst))
 
     def size(self):
         return len(self.buffer)
@@ -73,7 +74,7 @@ class DeepQNetwork:
     def __init__(self):
         # [target_net, evaluate_net]
         self.evaluate_net = QNetwork()
-        self.target_net = type(self.evaluate_net)()
+        self.target_net = type(self.evaluate_net)()  # target network与evaluate_net结构相同
         self.target_net.load_state_dict(self.evaluate_net.state_dict())  # copy weights and stuff
 
         self.optimizer = torch.optim.Adam(self.evaluate_net.parameters(),
@@ -81,23 +82,23 @@ class DeepQNetwork:
         self.memory = ReplayBuffer()
 
     def train(self):
-        for i in range(10):
-            s, a, r, s_, done_mask = self.memory.sample(batch_size)
+        # sample a batch from the replay buffer
+        s, a, r, s_, done_mask = self.memory.sample(batch_size)
 
-            q_out = self.evaluate_net(s)
-            q_a = q_out.gather(1, a)
-            max_q_prime = torch.max(self.target_net(s_), dim=1, keepdim=True).values
-            target = r + gamma * max_q_prime * done_mask
-            loss = F.smooth_l1_loss(q_a, target)
+        q_out = self.evaluate_net(s)
+        q_a = q_out.gather(1, a)
+        max_q_prime = torch.max(self.target_net(s_), dim=1, keepdim=True).values
+        target = r + gamma * max_q_prime * done_mask
+        loss = F.smooth_l1_loss(q_a, target)
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
     def sample_action(self, obs, epsilon):
         coin = random.random()
         if coin < epsilon:
-            return random.randint(0, 1)
+            return env.action_space.sample()
         else:
             out = self.evaluate_net(obs)
             return out.argmax().item()
@@ -128,9 +129,10 @@ def main():
                 break
 
         if trainer.memory.size() > 2000:
-            trainer.train()
+            trainer.train()  # 训练数据存储到一定量后开始训练网络
 
         if n_epi % print_interval == 0 and n_epi != 0:
+            # 更新target network
             trainer.target_net.load_state_dict(trainer.evaluate_net.state_dict())
             print("n_episode :{}, score : {:.1f}, n_buffer : {}, eps : {:.1f}%".format(
                 n_epi, score / print_interval, trainer.memory.size(), epsilon * 100))

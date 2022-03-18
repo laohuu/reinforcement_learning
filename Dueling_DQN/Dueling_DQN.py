@@ -2,6 +2,7 @@ import gym
 import collections
 import random
 
+import numpy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,24 +47,12 @@ class ReplayBuffer():
             s_next_lst.append(s_)
             done_mask_lst.append([done_mask])
 
-        return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
-               torch.tensor(r_lst), torch.tensor(s_next_lst, dtype=torch.float), \
-               torch.tensor(done_mask_lst)
+        return torch.tensor(numpy.array(s_lst), dtype=torch.float), torch.tensor(numpy.array(a_lst)), \
+               torch.tensor(numpy.array(r_lst)), torch.tensor(numpy.array(s_next_lst), dtype=torch.float), \
+               torch.tensor(numpy.array(done_mask_lst))
 
     def size(self):
         return len(self.buffer)
-
-
-class QNetwork(nn.Module):
-    def __init__(self):
-        super(QNetwork, self).__init__()
-        hidden_dims = 128
-        self.out_layer = torch.nn.Sequential(nn.Linear(n_features, hidden_dims),
-                                             nn.ReLU(),
-                                             nn.Linear(hidden_dims, n_actions))
-
-    def forward(self, x):
-        return self.out_layer(x)
 
 
 class DQNDuelingNet(nn.Module):
@@ -99,18 +88,17 @@ class Dueling_DQN:
         self.memory = ReplayBuffer()
 
     def train(self):
-        for i in range(10):
-            s, a, r, s_, done_mask = self.memory.sample(batch_size)
+        s, a, r, s_, done_mask = self.memory.sample(batch_size)
 
-            q_out = self.evaluate_net(s)
-            q_a = q_out.gather(1, a)
-            max_q_prime = torch.max(self.target_net(s_), dim=1, keepdim=True).values
-            target = r + gamma * max_q_prime * done_mask
-            loss = F.smooth_l1_loss(q_a, target)
+        q_out = self.evaluate_net(s)
+        q_a = q_out.gather(1, a)
+        max_q_prime = torch.max(self.target_net(s_), dim=1, keepdim=True).values
+        target = r + gamma * max_q_prime * done_mask
+        loss = F.smooth_l1_loss(q_a, target)
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
     def sample_action(self, obs, epsilon):
         coin = random.random()

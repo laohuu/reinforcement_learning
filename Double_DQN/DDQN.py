@@ -2,6 +2,7 @@ import gym
 import collections
 import random
 
+import numpy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,9 +47,9 @@ class ReplayBuffer():
             s_next_lst.append(s_)
             done_mask_lst.append([done_mask])
 
-        return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
-               torch.tensor(r_lst), torch.tensor(s_next_lst, dtype=torch.float), \
-               torch.tensor(done_mask_lst)
+        return torch.tensor(numpy.array(s_lst), dtype=torch.float), torch.tensor(numpy.array(a_lst)), \
+               torch.tensor(numpy.array(r_lst)), torch.tensor(numpy.array(s_next_lst), dtype=torch.float), \
+               torch.tensor(numpy.array(done_mask_lst))
 
     def size(self):
         return len(self.buffer)
@@ -81,26 +82,25 @@ class DeepQNetwork:
         self.memory = ReplayBuffer()
 
     def train(self):
-        for i in range(10):
-            s, a, r, s_, done_mask = self.memory.sample(batch_size)
+        s, a, r, s_, done_mask = self.memory.sample(batch_size)
 
-            # 重点部分
-            q_eval = self.evaluate_net(s).gather(1, a)
-            q_target_next = self.target_net(s_).detach()
-            q_eval_next = self.evaluate_net(s_).detach()
-            q_next = q_target_next.gather(1, q_eval_next.argmax(axis=1).reshape(-1, 1))
-            target = r + gamma * q_next * done_mask
-            print(q_next.shape)
-            loss = F.smooth_l1_loss(q_eval, target)
+        # 重点部分
+        q_eval = self.evaluate_net(s).gather(1, a)
+        q_target_next = self.target_net(s_).detach()
+        q_eval_next = self.evaluate_net(s_).detach()
+        q_next = q_target_next.gather(1, q_eval_next.argmax(axis=1).reshape(-1, 1))
+        target = r + gamma * q_next * done_mask
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+        loss = F.smooth_l1_loss(q_eval, target)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
     def sample_action(self, obs, epsilon):
         coin = random.random()
         if coin < epsilon:
-            return random.randint(0, 1)
+            return env.action_space.sample()
         else:
             out = self.evaluate_net(obs)
             return out.argmax().item()

@@ -1,6 +1,8 @@
 import gym
 import random
 import collections
+
+import numpy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,7 +20,7 @@ tau = 0.005  # for target network soft update
 MAX_EPISODE = 10000
 RENDER = False
 
-env = gym.make('Pendulum-v0')
+env = gym.make('Pendulum-v1')
 env = env.unwrapped
 env.seed(1)
 torch.manual_seed(1)
@@ -32,27 +34,26 @@ n_actions = env.action_space.shape[0]
 
 class ReplayBuffer():
     def __init__(self):
-        self.buffer = collections.deque(maxlen=buffer_limit)
+        self.buffer = collections.deque(maxlen=buffer_limit)  # 初始化buffer容量
 
     def put(self, transition):
-        self.buffer.append(transition)
+        self.buffer.append(transition)  # 存入一个transition
 
-    def sample(self, n):
+    def sample(self, n):  # 取样
         mini_batch = random.sample(self.buffer, n)
         s_lst, a_lst, r_lst, s_next_lst, done_mask_lst = [], [], [], [], []
 
         for transition in mini_batch:
-            s, a, r, s_next, done = transition
+            s, a, r, s_, done_mask = transition
             s_lst.append(s)
             a_lst.append([a])
             r_lst.append([r])
-            s_next_lst.append(s_next)
-            done_mask = 0.0 if done else 1.0
+            s_next_lst.append(s_)
             done_mask_lst.append([done_mask])
 
-        return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst, dtype=torch.float), \
-               torch.tensor(r_lst, dtype=torch.float), torch.tensor(s_next_lst, dtype=torch.float), \
-               torch.tensor(done_mask_lst, dtype=torch.float)
+        return torch.tensor(numpy.array(s_lst), dtype=torch.float), torch.tensor(numpy.array(a_lst)), \
+               torch.tensor(numpy.array(r_lst)), torch.tensor(numpy.array(s_next_lst), dtype=torch.float), \
+               torch.tensor(numpy.array(done_mask_lst))
 
     def size(self):
         return len(self.buffer)
@@ -101,8 +102,8 @@ class OrnsteinUhlenbeckNoise:
         self.x_prev = np.zeros_like(self.mu)
 
     def __call__(self):
-        x = self.x_prev + self.theta * (self.mu - self.x_prev) * self.dt + \
-            self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.mu.shape)
+        x = self.x_prev + self.theta * (self.mu - self.x_prev) * self.dt + self.sigma * np.sqrt(
+            self.dt) * np.random.normal(size=self.mu.shape)
         self.x_prev = x
         return x
 

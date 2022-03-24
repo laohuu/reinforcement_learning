@@ -18,10 +18,10 @@ buffer_limit = 50000
 tau = 0.005  # for target network soft update
 
 MAX_EPISODE = 10000
-RENDER = False
+RENDER = True
 
 env = gym.make('Pendulum-v1')
-env = env.unwrapped
+# env = env.unwrapped
 env.seed(1)
 torch.manual_seed(1)
 
@@ -51,7 +51,7 @@ class ReplayBuffer():
             s_next_lst.append(s_)
             done_mask_lst.append([done_mask])
 
-        return torch.tensor(numpy.array(s_lst), dtype=torch.float), torch.tensor(numpy.array(a_lst)), \
+        return torch.tensor(numpy.array(s_lst), dtype=torch.float), torch.tensor(numpy.array(a_lst), dtype=torch.float), \
                torch.tensor(numpy.array(r_lst)), torch.tensor(numpy.array(s_next_lst), dtype=torch.float), \
                torch.tensor(numpy.array(done_mask_lst))
 

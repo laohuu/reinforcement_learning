@@ -32,6 +32,29 @@ n_features = env.observation_space.shape[0]
 n_actions = env.action_space.shape[0]
 
 
+# class NormalizedActions(gym.ActionWrapper):
+#     def action(self, action):
+#         low_bound = self.action_space.low
+#         upper_bound = self.action_space.high
+#
+#         action = low_bound + (action + 1.0) * 0.5 * (upper_bound - low_bound)
+#         # 将经过tanh输出的值重新映射回环境的真实值内
+#         action = np.clip(action, low_bound, upper_bound)
+#
+#         return action
+#
+#     def reverse_action(self, action):
+#         low_bound = self.action_space.low
+#         upper_bound = self.action_space.high
+#
+#         # 因为激活函数使用的是tanh，这里将环境输出的动作正则化到（-1，1）
+#
+#         action = 2 * (action - low_bound) / (upper_bound - low_bound) - 1
+#         action = np.clip(action, low_bound, upper_bound)
+#
+#         return action
+
+
 class ReplayBuffer():
     def __init__(self):
         self.buffer = collections.deque(maxlen=buffer_limit)  # 初始化buffer容量

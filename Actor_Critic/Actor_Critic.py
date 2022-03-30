@@ -1,4 +1,5 @@
 import gym
+import numpy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -62,9 +63,11 @@ class ActorCritic(nn.Module):
             done_mask = 0.0 if done else 1.0
             done_lst.append([done_mask])
 
-        s_batch, a_batch, r_batch, s_next_batch, done_batch = torch.tensor(s_lst, dtype=torch.float), torch.tensor(
-            a_lst), torch.tensor(r_lst, dtype=torch.float), torch.tensor(s_next_lst, dtype=torch.float), torch.tensor(
-            done_lst, dtype=torch.float)
+        s_batch, a_batch, r_batch, s_next_batch, done_batch = torch.tensor(numpy.array(s_lst),
+                                                                           dtype=torch.float), torch.tensor(
+            a_lst), torch.tensor(numpy.array(r_lst), dtype=torch.float), torch.tensor(
+            numpy.array(s_next_lst), dtype=torch.float), torch.tensor(
+            numpy.array(done_lst), dtype=torch.float)
         self.data = []
         return s_batch, a_batch, r_batch, s_next_batch, done_batch
 

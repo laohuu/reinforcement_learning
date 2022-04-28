@@ -14,12 +14,10 @@ K_epoch = 3
 T_horizon = 20
 
 MAX_EPISODE = 10000
-RENDER = True
+RENDER = False
 
 env = gym.make('CartPole-v1')
 env = env.unwrapped
-env.seed(1)
-torch.manual_seed(1)
 
 print("env.action_space :", env.action_space)
 print("env.observation_space :", env.observation_space)
@@ -53,29 +51,29 @@ class PPO(nn.Module):
         self.data.append(transition)
 
     def make_batch(self):
-        s_lst, a_lst, r_lst, s_next_lst, prob_a_lst, done_lst = [], [], [], [], [], []
+        s_lst, a_lst, r_lst, s_prime_lst, prob_a_lst, done_lst = [], [], [], [], [], []
         for transition in self.data:
-            s, a, r, s_next, prob_a, done = transition
+            s, a, r, s_prime, prob_a, done = transition
 
             s_lst.append(s)
             a_lst.append([a])
             r_lst.append([r])
-            s_next_lst.append(s_next)
+            s_prime_lst.append(s_prime)
             prob_a_lst.append([prob_a])
             done_mask = 0 if done else 1
             done_lst.append([done_mask])
 
-        s, a, r, s_next, done_mask, prob_a = torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
-                                             torch.tensor(r_lst), torch.tensor(s_next_lst, dtype=torch.float), \
-                                             torch.tensor(done_lst, dtype=torch.float), torch.tensor(prob_a_lst)
+        s, a, r, s_prime, done_mask, prob_a = torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst), \
+                                              torch.tensor(r_lst), torch.tensor(s_prime_lst, dtype=torch.float), \
+                                              torch.tensor(done_lst, dtype=torch.float), torch.tensor(prob_a_lst)
         self.data = []
-        return s, a, r, s_next, done_mask, prob_a
+        return s, a, r, s_prime, done_mask, prob_a
 
     def train_net(self):
-        s, a, r, s_next, done_mask, prob_a = self.make_batch()
+        s, a, r, s_prime, done_mask, prob_a = self.make_batch()
 
         for i in range(K_epoch):
-            td_target = r + gamma * self.v(s_next) * done_mask
+            td_target = r + gamma * self.v(s_prime) * done_mask
             delta = td_target - self.v(s)
             delta = delta.detach().numpy()
 
@@ -115,10 +113,10 @@ def main():
                 prob = model.pi(torch.from_numpy(s).float())
                 m = Categorical(prob)
                 a = m.sample().item()
-                s_next, r, done, info = env.step(a)
+                s_prime, r, done, info = env.step(a)
 
-                model.put_data((s, a, r / 100.0, s_next, prob[a].item(), done))
-                s = s_next
+                model.put_data((s, a, r / 100.0, s_prime, prob[a].item(), done))
+                s = s_prime
 
                 score += r
                 if done:
